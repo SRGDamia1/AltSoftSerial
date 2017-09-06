@@ -44,7 +44,14 @@ class AltSoftSerial : public Stream
 public:
 	AltSoftSerial() { }
 	~AltSoftSerial() { end(); }
-	static void begin(uint32_t baud) { init((ALTSS_BASE_FREQ + baud / 2) / baud); }
+	enum parity_type {
+		     PARITY_NONE,
+		     PARITY_EVEN,
+		     PARITY_ODD,
+		     PARITY_MARK,
+		     PARITY_SPACE,
+	};
+	static void begin(uint32_t baud, enum parity_type parity = PARITY_NONE) { init((ALTSS_BASE_FREQ + baud / 2) / baud, parity); }
 	static void end();
 	int peek();
 	int read();
@@ -68,7 +75,7 @@ public:
 	static void enable_timer0(bool enable) { }
 	static bool timing_error;
 private:
-	static void init(uint32_t cycles_per_bit);
+	static void init(uint32_t cycles_per_bit, enum parity_type parity);
 	static void writeByte(uint8_t byte);
 };
 

@@ -57,12 +57,14 @@ static volatile uint8_t tx_buffer_tail;
 #define TX_BUFFER_SIZE 68
 static volatile uint8_t tx_buffer[TX_BUFFER_SIZE];
 
+static enum AltSoftSerial::parity_type tx_parity_flag;                                                                   
+static uint8_t tx_parity_bit;
 
 #ifndef INPUT_PULLUP
 #define INPUT_PULLUP INPUT
 #endif
 
-void AltSoftSerial::init(uint32_t cycles_per_bit)
+void AltSoftSerial::init(uint32_t cycles_per_bit, enum parity_type parity)
 {
 	if (cycles_per_bit < 7085) {
 		CONFIG_TIMER_NOPRESCALE();
@@ -85,6 +87,7 @@ void AltSoftSerial::init(uint32_t cycles_per_bit)
 	tx_state = 0;
 	tx_buffer_head = 0;
 	tx_buffer_tail = 0;
+	tx_parity_flag = parity;
 	ENABLE_INT_INPUT_CAPTURE();
 }
 
@@ -119,6 +122,7 @@ void AltSoftSerial::writeByte(uint8_t b)
 		tx_state = 1;
 		tx_byte = b;
 		tx_bit = 0;
+		tx_parity_bit = 0;
 		ENABLE_INT_COMPARE_A();
 		CONFIG_MATCH_CLEAR();
 		SET_COMPARE_A(GET_TIMER_COUNT() + 16);
@@ -138,6 +142,7 @@ ISR(COMPARE_A_INTERRUPT)
 	while (state < 9) {
 		target += ticks_per_bit;
 		bit = byte & 1;
+		tx_parity_bit ^= bit;
 		byte >>= 1;
 		state++;
 		if (bit != tx_bit) {
@@ -154,8 +159,25 @@ ISR(COMPARE_A_INTERRUPT)
 			return;
 		}
 	}
-	if (state == 9) {
-		tx_state = 10;
+    if(state == 9) {
+		state = tx_state = 10;
+		if(tx_parity_flag != AltSoftSerial::PARITY_NONE) {
+	                if(tx_parity_flag == AltSoftSerial::PARITY_ODD)
+	                        tx_parity_bit ^= 1;
+	                else if(tx_parity_flag == AltSoftSerial::PARITY_MARK)
+	                        tx_parity_bit = 1;
+	                else if(tx_parity_flag == AltSoftSerial::PARITY_SPACE)
+	                        tx_parity_bit = 0;
+	                if(tx_parity_bit)
+	                        CONFIG_MATCH_SET();
+	                else
+	                        CONFIG_MATCH_CLEAR();
+	                SET_COMPARE_A(target + ticks_per_bit);
+	                return;
+	        }
+	}
+	if (state == 10) {
+	    tx_state = 11;
 		CONFIG_MATCH_SET();
 		SET_COMPARE_A(target + ticks_per_bit);
 		return;
@@ -172,6 +194,7 @@ ISR(COMPARE_A_INTERRUPT)
 		tx_buffer_tail = tail;
 		tx_byte = tx_buffer[tail];
 		tx_bit = 0;
+		tx_parity_bit = 0;
 		CONFIG_MATCH_CLEAR();
 		SET_COMPARE_A(target + ticks_per_bit);
 		// TODO: how to detect timing_error?
