@@ -60,11 +60,13 @@ static volatile uint8_t tx_buffer[TX_BUFFER_SIZE];
 static enum AltSoftSerial::parity_type tx_parity_flag;                                                                   
 static uint8_t tx_parity_bit;
 
+static bool inverted_logic_flag;
+
 #ifndef INPUT_PULLUP
 #define INPUT_PULLUP INPUT
 #endif
 
-void AltSoftSerial::init(uint32_t cycles_per_bit, enum parity_type parity)
+void AltSoftSerial::init(uint32_t cycles_per_bit, enum parity_type parity, bool inverted_logic)
 {
 	if (cycles_per_bit < 7085) {
 		CONFIG_TIMER_NOPRESCALE();
@@ -79,8 +81,12 @@ void AltSoftSerial::init(uint32_t cycles_per_bit, enum parity_type parity)
 	ticks_per_bit = cycles_per_bit;
 	rx_stop_ticks = cycles_per_bit * 37 / 4;
 	pinMode(INPUT_CAPTURE_PIN, INPUT_PULLUP);
-	digitalWrite(OUTPUT_COMPARE_A_PIN, HIGH);
 	pinMode(OUTPUT_COMPARE_A_PIN, OUTPUT);
+	if (inverted_logic_flag)
+		digitalWrite(OUTPUT_COMPARE_A_PIN, LOW);
+	else
+		digitalWrite(OUTPUT_COMPARE_A_PIN, HIGH);
+
 	rx_state = 0;
 	rx_buffer_head = 0;
 	rx_buffer_tail = 0;
@@ -88,6 +94,7 @@ void AltSoftSerial::init(uint32_t cycles_per_bit, enum parity_type parity)
 	tx_buffer_head = 0;
 	tx_buffer_tail = 0;
 	tx_parity_flag = parity;
+	inverted_logic_flag = inverted_logic;
 	ENABLE_INT_INPUT_CAPTURE();
 }
 
@@ -124,7 +131,10 @@ void AltSoftSerial::writeByte(uint8_t b)
 		tx_bit = 0;
 		tx_parity_bit = 0;
 		ENABLE_INT_COMPARE_A();
-		CONFIG_MATCH_CLEAR();
+		if (inverted_logic_flag)
+			CONFIG_MATCH_SET();
+		else
+			CONFIG_MATCH_CLEAR();
 		SET_COMPARE_A(GET_TIMER_COUNT() + 16);
 	}
 	SREG = intr_state;
@@ -147,9 +157,15 @@ ISR(COMPARE_A_INTERRUPT)
 		state++;
 		if (bit != tx_bit) {
 			if (bit) {
-				CONFIG_MATCH_SET();
+				if (inverted_logic_flag)
+					CONFIG_MATCH_CLEAR();
+				else
+					CONFIG_MATCH_SET();
 			} else {
-				CONFIG_MATCH_CLEAR();
+				if (inverted_logic_flag)
+					CONFIG_MATCH_SET();
+				else
+					CONFIG_MATCH_CLEAR();
 			}
 			SET_COMPARE_A(target);
 			tx_bit = bit;
@@ -168,17 +184,29 @@ ISR(COMPARE_A_INTERRUPT)
 	                        tx_parity_bit = 1;
 	                else if(tx_parity_flag == AltSoftSerial::PARITY_SPACE)
 	                        tx_parity_bit = 0;
-	                if(tx_parity_bit)
-	                        CONFIG_MATCH_SET();
-	                else
-	                        CONFIG_MATCH_CLEAR();
+	                if(tx_parity_bit) {
+						if (inverted_logic_flag)
+							CONFIG_MATCH_CLEAR();
+						else
+							CONFIG_MATCH_SET();
+					}
+					else
+					{
+						if (inverted_logic_flag)
+							CONFIG_MATCH_SET();
+						else
+							CONFIG_MATCH_CLEAR();
+					}
 	                SET_COMPARE_A(target + ticks_per_bit);
 	                return;
 	        }
 	}
 	if (state == 10) {
 	    tx_state = 11;
-		CONFIG_MATCH_SET();
+		if (inverted_logic_flag)
+			CONFIG_MATCH_CLEAR();
+		else
+			CONFIG_MATCH_SET();
 		SET_COMPARE_A(target + ticks_per_bit);
 		return;
 	}
@@ -186,7 +214,10 @@ ISR(COMPARE_A_INTERRUPT)
 	tail = tx_buffer_tail;
 	if (head == tail) {
 		tx_state = 0;
-		CONFIG_MATCH_NORMAL();
+		if (inverted_logic_flag)
+			CONFIG_MATCH_CLEAR();
+		else
+			CONFIG_MATCH_NORMAL();
 		DISABLE_INT_COMPARE_A();
 	} else {
 		tx_state = 1;
@@ -195,7 +226,10 @@ ISR(COMPARE_A_INTERRUPT)
 		tx_byte = tx_buffer[tail];
 		tx_bit = 0;
 		tx_parity_bit = 0;
-		CONFIG_MATCH_CLEAR();
+		if (inverted_logic_flag)
+			CONFIG_MATCH_SET();
+		else
+			CONFIG_MATCH_CLEAR();
 		SET_COMPARE_A(target + ticks_per_bit);
 		// TODO: how to detect timing_error?
 	}
